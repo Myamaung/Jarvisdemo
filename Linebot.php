@@ -1,71 +1,213 @@
-<?php
-    $accessToken = "+4yfVYX0wf7zGwErRtMhd/PJAEa9BaN7dlGJMMWR4t2W1VKCK/iXanpWO6jNn/bsHQJswHEDquyeWEZYvQCFO1V4FaYf+f9ZYj1W/7KGBuUotL+ncnwkzUZHJFxXcNF+5gNj9JuTUqVcNRozLS054wdB04t89/1O/w1cDnyilFU=";//copy Channel access token ตอนที่ตั้งค่ามาใส่
-    
-    $content = file_get_contents('php://input');
-    $arrayJson = json_decode($content, true);
-    
-    $arrayHeader = array();
-    $arrayHeader[] = "Content-Type: application/json";
-    $arrayHeader[] = "Authorization: Bearer {$accessToken}";
-    
-    //รับข้อความจากผู้ใช้
-    $message = $arrayJson['events'][0]['message']['text'];
-#ตัวอย่าง Message Type "Text"
-    if($message == "สวัสดี"){
-        $arrayPostData['replyToken'] = $arrayJson['events'][0]['replyToken'];
-        $arrayPostData['messages'][0]['type'] = "text";
-        $arrayPostData['messages'][0]['text'] = "สวัสดีจ้าาา";
-        replyMsg($arrayHeader,$arrayPostData);
+require('dotenv').config();
+const request = require('request');
+const express = require('express');
+const port = process.env.PORT || 3001;
+const _ = require('lodash');
+const bodyParser = require('body-parser');
+const app = express();
+app.use(bodyParser.urlencoded({ extended: false }));
+app.use(bodyParser.json());
+// STATUS LED
+let status = [false, false];
+// TOPIC
+const LED_TOPIC = `/ESP/LED`;
+// Create a MQTT Client
+const mqtt = require('mqtt');
+// Create a client connection to CloudMQTT for live data
+const client = mqtt.connect('hairdresser.cloudmqtt.com',  // Server MQTT ของเรานะ
+{
+  username: 'imfuvmbe', // Username MQTT ของเรานะ
+  password: 'n5WYqFIhw-nE', // Password MQTT ของเรานะ
+  port: 16796 // Port MQTT ของเรานะ
+});
+client.on('connect', function() { 
+  // When connected
+  console.log("Connected to CloudMQTT");
+client.subscribe('/ESP/LED', function() {
+    // when a message arrives, do something with it
+    client.on('message', function(topic, message, packet) {
+      switch(topic) {
+        case LED_TOPIC:
+          messageFromBuffer = message.toString('utf8');
+          if (messageFromBuffer != 'GET') {
+            const splitStatus = messageFromBuffer.split(',');
+            if (splitStatus.length > 0) {
+              splitStatus.map((ele, index)=> {
+                console.log(`DOIT ${ele} ${index} ${parseInt(ele)}`);
+                if (ele == 0) {
+                  status[index] = false;
+                } else {
+                  status[index] = true;
+                }
+              });
+            }
+          }
+console.log(`Received '${message}' on '${topic}`);
+        break;
+        default:
+          console.log(`Unknow Topic group`);
+      }
+    });
+  });
+});
+app.post('/webhook', async (req, res) => {
+const message = req.body.events[0].message.text;
+  const reply_token = req.body.events[0].replyToken;
+  const TOKEN = `qE8eMhSx9D4zSOz5MqOq0yeqKTADXbQmGIf5cv1hQR7`; // Token ที่ได้จาก Channel access token
+  const HEADERS = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${TOKEN}`
+  };
+if (message == 'เปิดไฟ หน้าบ้าน' || message == 'ปิดไฟ หน้าบ้าน') {
+    if (message == 'เปิดไฟ หน้าบ้าน') {
+      await mqttMessage(LED_TOPIC, 'LEDON_ONE');
+    } else {
+      await mqttMessage(LED_TOPIC, 'LEDOFF_ONE');
     }
-    #ตัวอย่าง Message Type "Sticker"
-    else if($message == "ฝันดี"){
-        $arrayPostData['replyToken'] = $arrayJson['events'][0]['replyToken'];
-        $arrayPostData['messages'][0]['type'] = "sticker";
-        $arrayPostData['messages'][0]['packageId'] = "2";
-        $arrayPostData['messages'][0]['stickerId'] = "46";
-        replyMsg($arrayHeader,$arrayPostData);
+  }
+if (message == 'เปิดไฟ หลังบ้าน' || message == 'ปิดไฟ หลังบ้าน') {
+    if (message == 'เปิดไฟ หลังบ้าน') {
+      await mqttMessage(LED_TOPIC, 'LEDON_TWO');
+    } else {
+      await mqttMessage(LED_TOPIC, 'LEDOFF_TWO');
     }
-    #ตัวอย่าง Message Type "Image"
-    else if($message == "รูปน้องแมว"){
-        $image_url = "https://i.pinimg.com/originals/cc/22/d1/cc22d10d9096e70fe3dbe3be2630182b.jpg";
-        $arrayPostData['replyToken'] = $arrayJson['events'][0]['replyToken'];
-        $arrayPostData['messages'][0]['type'] = "image";
-        $arrayPostData['messages'][0]['originalContentUrl'] = $image_url;
-        $arrayPostData['messages'][0]['previewImageUrl'] = $image_url;
-        replyMsg($arrayHeader,$arrayPostData);
+  }
+mqttMessage(LED_TOPIC, 'GET');
+if (message == 'สถานะทั้งหมด') {
+    await checkStatus();
+  } else {
+    await checkStatus();
+  }
+console.log(status);
+  const objectMessage = genFlexMessage(status[0], status[1]);
+const body = JSON.stringify({
+    replyToken: reply_token,
+    messages: [
+      objectMessage
+    ]
+  });
+request({
+    method: `POST`,
+    url: 'https://api.line.me/v2/bot/message/reply',
+    headers: HEADERS,
+    body: body
+  });
+res.sendStatus(200);
+});
+let mqttMessage = async (topic, message) => {
+  client.publish(topic, message);
+  await checkStatus();
+}
+let checkStatus = async () => {
+  await new Promise(done => setTimeout(done, 3000));
+}
+let genFlexMessage = (ledOne, ledTwo) => {
+  return {
+    "type": "flex",
+    "altText": "สถานะระบบไฟ",
+    "contents": {
+      "type": "bubble",
+      "hero": {
+        "type": "image",
+        "url": "https://www.ihome108.com/wp-content/uploads/2017/05/home-slide-01.jpg",
+        "size": "full",
+        "aspectRatio": "20:13",
+        "aspectMode": "cover",
+        "action": {
+          "type": "uri",
+          "label": "Line",
+          "uri": "https://linecorp.com/"
+        }
+      },
+      "body": {
+        "type": "box",
+        "layout": "vertical",
+        "contents": [
+          {
+            "type": "text",
+            "text": "ระบบไฟ",
+            "flex": 0,
+            "size": "xl",
+            "weight": "bold"
+          },
+          {
+            "type": "box",
+            "layout": "horizontal",
+            "flex": 1,
+            "margin": "md",
+            "contents": [
+              {
+                "type": "text",
+                "text": "ไฟหน้าบ้าน",
+                "align": "start",
+                "gravity": "top",
+                "weight": "bold"
+              },
+              {
+                "type": "text",
+                "text": (ledOne == true) ? "Open" : "Close",
+                "align": "start",
+                "weight": "bold",
+                "color": (ledOne == true) ? "#FF0000" : "#000000",
+              }
+            ]
+          },
+          {
+            "type": "box",
+            "layout": "horizontal",
+            "flex": 1,
+            "margin": "md",
+            "contents": [
+              {
+                "type": "text",
+                "text": "ไฟหลังบ้าน",
+                "align": "start",
+                "gravity": "top",
+                "weight": "bold"
+              },
+              {
+                "type": "text",
+                "text": (ledTwo == true) ? "Open" : "Close",
+                "align": "start",
+                "weight": "bold",
+                "color": (ledTwo == true) ? "#FF0000" : "#000000",
+              }
+            ]
+          }
+        ]
+      },
+      "footer": {
+        "type": "box",
+        "layout": "vertical",
+        "flex": 0,
+        "spacing": "sm",
+        "contents": [
+          {
+            "type": "button",
+            "action": {
+              "type": "message",
+              "label": `${(ledOne == true) ? "ปิดไฟ" : "เปิดไฟ"}หน้าบ้าน`,
+              "text": `${(ledOne == true) ? "ปิดไฟ" : "เปิดไฟ"} หน้าบ้าน`
+            },
+            "height": "sm",
+            "style": "link"
+          },
+          {
+            "type": "button",
+            "action": {
+              "type": "message",
+              "label": `${(ledTwo == true) ? "ปิดไฟ" : "เปิดไฟ"}หลังบ้าน`,
+              "text": `${(ledTwo == true) ? "ปิดไฟ" : "เปิดไฟ"} หลังบ้าน`
+            },
+            "height": "sm",
+            "style": "link"
+          },
+          {
+            "type": "spacer",
+            "size": "sm"
+          }
+        ]
+      }
     }
-    #ตัวอย่าง Message Type "Location"
-    else if($message == "พิกัดสยามพารากอน"){
-        $arrayPostData['replyToken'] = $arrayJson['events'][0]['replyToken'];
-        $arrayPostData['messages'][0]['type'] = "location";
-        $arrayPostData['messages'][0]['title'] = "สยามพารากอน";
-        $arrayPostData['messages'][0]['address'] =   "13.7465354,100.532752";
-        $arrayPostData['messages'][0]['latitude'] = "13.7465354";
-        $arrayPostData['messages'][0]['longitude'] = "100.532752";
-        replyMsg($arrayHeader,$arrayPostData);
-    }
-    #ตัวอย่าง Message Type "Text + Sticker ใน 1 ครั้ง"
-    else if($message == "ลาก่อน"){
-        $arrayPostData['replyToken'] = $arrayJson['events'][0]['replyToken'];
-        $arrayPostData['messages'][0]['type'] = "text";
-        $arrayPostData['messages'][0]['text'] = "อย่าทิ้งกันไป";
-        $arrayPostData['messages'][1]['type'] = "sticker";
-        $arrayPostData['messages'][1]['packageId'] = "1";
-        $arrayPostData['messages'][1]['stickerId'] = "131";
-        replyMsg($arrayHeader,$arrayPostData);
-    }
-function replyMsg($arrayHeader,$arrayPostData){
-        $strUrl = "https://api.line.me/v2/bot/message/reply";
-        $ch = curl_init();
-        curl_setopt($ch, CURLOPT_URL,$strUrl);
-        curl_setopt($ch, CURLOPT_HEADER, false);
-        curl_setopt($ch, CURLOPT_POST, true);
-        curl_setopt($ch, CURLOPT_HTTPHEADER, $arrayHeader);    
-        curl_setopt($ch, CURLOPT_POSTFIELDS,json_encode($arrayPostData));
-        curl_setopt($ch, CURLOPT_RETURNTRANSFER,true);
-        curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, false);
-        $result = curl_exec($ch);
-        curl_close ($ch);
-    }
-   exit;
-?>
+  };
+}
